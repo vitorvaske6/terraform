@@ -1,6 +1,37 @@
 # Using Terraform and Ansible on Infrastructure as Code
 By following Alura course [Infrastructure as Code](https://cursos.alura.com.br/formacao-infraestrutura-codigo) the objective of this project is to setup a Terraform project of IAC.
 
+
+## Instalation on Windows
+
+Ansible it's not made to run on windows, so we'll need to install windows WSL to proceed. Run the command below to install the default ubuntu version:
+```
+wsl --install
+```
+
+You will be asked to type a username and choose a password. With the linux setted up execute the commands below:
+
+To install python:
+```
+sudo apt install python3
+```
+
+To install terraform:
+```
+wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+sudo apt update && sudo apt install terraform
+```
+
+To install Ansible:
+```
+sudo apt update
+sudo apt install software-properties-common
+sudo add-apt-repository --yes --update ppa:ansible/ansible
+sudo apt-get install ansible
+```
+
+
 ## AWS
 
 ### IAM - User and Access Keys
@@ -19,7 +50,7 @@ After the user is created, go to its page if you're not already and hit "Create 
 ### AWS CLI
 Now it's necessary to configure the AWS CLI to use the tokens created earlier. In the terminal run: 
 ```
-aws generate
+aws configure
 ```
 You will need to provide 
  - AWS Access Key ID - **REQUIRED**: Access key from the key generated through [IAM](#iam---user-and-access-keys)
@@ -111,14 +142,19 @@ To apply the changes use the [apply command](#init) we've learned earlier.
 
 #### Connecting with SSH
 
-Before we can connect, we need to run the command below to make sure the pair key won't be publicly visible:
+To use our key pair without sudo privileges, we need to copy the file to the WSL ssh folder with the command below:
 ```
-chmod 400 "keys/terraform-instance.pem"
+cp ./keys/terraform-instance.pem ~/.ssh/terraform-instance.pem
+```
+
+Now we run the command below to make sure the key won't be publicly visible:
+```
+chmod 400 "~/.ssh/terraform-instance.pem"
 ```
 
 To connect to the instance run the command below in a bash terminal or use the public DNS provided (ec2-34-208-196-80.us-west-2.compute.amazonaws.com):
 ```
-ssh -i "keys/terraform-instance.pem" ubuntu@ec2-34-208-196-80.us-west-2.compute.amazonaws.com
+ssh -i "~/.ssh/terraform-instance.pem" ubuntu@ec2-34-208-196-80.us-west-2.compute.amazonaws.com
 ```
 
 After the connection is successful you should be able to use the terminal from the instance like this:
@@ -163,3 +199,19 @@ nohup busybox httpd -f -p 8080 &
 Apply the changes and try the URL again.
 
 **NOTE**: The IPv4 address may change, even if the istance is not terminated.
+
+## Ansible
+
+The problem with the automation using terraform is that everytime you change the file a new instance would be created, so to solve this issue enters Ansible.
+
+We start by creating two files: `hosts.yml` and `playbook.yml` and removing `user_data` and `user_data_replace_on_change` from the aws_instance resource.
+
+Now we execute the command below:
+```
+ansible-playbook playbook.yml -u ubuntu --private-key "~/.ssh/terraform-instance.pem" -i hosts.yml
+```
+Flags:
+ - -u: define the username;
+ - --private-key: the path for the key pair;
+ - -i: in wich instance it will execute the commands.
+

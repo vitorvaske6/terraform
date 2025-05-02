@@ -20,8 +20,8 @@ resource "aws_instance" "app_server" {
   # Instance type - 1 vCPU, 1 GiB RAM
   instance_type = "t2.micro"
   key_name = "terraform-instance"
-  user_data = "${file("./scripts/user_data.sh")}"
-  user_data_replace_on_change = true
+  # user_data = "${file("./scripts/user_data.sh")}"
+  # user_data_replace_on_change = true
   tags = {
     Name = "Terraform-Instance-v0.1"
   }
