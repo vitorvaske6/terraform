@@ -143,3 +143,23 @@ To access the server, you can get the public IPv4 address of the EC2 instance:
 ![Instance public IPv4](/images/instance_public_ipv4.png)
 
 The final URL should look like this: http://34.208.196.80:8080/. Since we didn't setup any certificates, it's really important to use the link with **http** and not **https**.
+
+#### Automating the creation with Terraform
+
+Using Terraform we can automate the commands we've just executed to run by the user and as soon as the instance is live. To do that we need to add the user_data in the aws_instance resource like this:
+```
+user_data = "${file("./scripts/user_data.sh")}"
+user_data_replace_on_change = true
+```
+
+The user_data.sh file content should look like this:
+```
+#!/bin/bash
+cd /home/ubuntu
+echo "<h1>Feito com Terraform</h1>" > index.html
+nohup busybox httpd -f -p 8080 &
+```
+
+Apply the changes and try the URL again.
+
+**NOTE**: The IPv4 address may change, even if the istance is not terminated.
