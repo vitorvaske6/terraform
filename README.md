@@ -53,10 +53,10 @@ Now it's necessary to configure the AWS CLI to use the tokens created earlier. I
 aws configure
 ```
 You will need to provide 
- - AWS Access Key ID - **REQUIRED**: Access key from the key generated through [IAM](#iam---user-and-access-keys)
- - AWS Secret Access Key - **REQUIRED**: Secret key from the key generated through [IAM](#iam---user-and-access-keys)
- - Default region name - **NOT REQUIRED**: Not necessary
- - Default output format - **NOT REQUIRED**: Not necessary
+- AWS Access Key ID - **REQUIRED**: Access key from the key generated through [IAM](#iam---user-and-access-keys)
+- AWS Secret Access Key - **REQUIRED**: Secret key from the key generated through [IAM](#iam---user-and-access-keys)
+- Default region name - **NOT REQUIRED**: Not necessary
+- Default output format - **NOT REQUIRED**: Not necessary
 
 
 ### EC2 Instance
@@ -106,22 +106,22 @@ Select the group you want to edit and then click on **Inbound rules** > **Edit i
 You will need to add a new rules with the following configurations:
 
 Rule: IPv4 Access
- - Type: All trafic;
- - Source type: Anywhere-IPv4
+- Type: All trafic;
+- Source type: Anywhere-IPv4
 
 Rule: IPv6 Access
- - Type: All trafic;
- - Source type: Anywhere-IPv6
+- Type: All trafic;
+- Source type: Anywhere-IPv6
 
 Now do the same with the outbound rules on **Outbound rules** > **Edit outbound rules**.
 
 Rule: IPv4 Access
- - Type: All trafic;
- - Source type: Anywhere-IPv4
+- Type: All trafic;
+- Source type: Anywhere-IPv4
 
 Rule: IPv6 Access
- - Type: All trafic;
- - Source type: Anywhere-IPv6
+- Type: All trafic;
+- Source type: Anywhere-IPv6
 
 
 ### Connecting to the Instance
@@ -169,11 +169,11 @@ nohup busybox httpd -f -p 8080 &
 ```
 
 What each part does:
- - nohup: continues to run the web server even if we disconnect from the instance;
- - busybox: it's a software that combines commom linux commands and features.
- - httpd: creates the http server:
-    - -f: make sure the server will be not daemonized (run in the current terminal showing it's outputs instead of running it on the background);
-    - -p: select the port for the web server to run on.
+- nohup: continues to run the web server even if we disconnect from the instance;
+- busybox: it's a software that combines commom linux commands and features.
+- httpd: creates the http server:
+  - -f: make sure the server will be not daemonized (run in the current terminal showing it's outputs instead of running it on the background);
+  - -p: select the port for the web server to run on.
 
 To access the server, you can get the public IPv4 address of the EC2 instance:
 ![Instance public IPv4](/images/instance_public_ipv4.png)
@@ -211,7 +211,114 @@ Now we execute the command below:
 ansible-playbook playbook.yml -u ubuntu --private-key "~/.ssh/terraform-instance.pem" -i hosts.yml
 ```
 Flags:
- - -u: define the username;
- - --private-key: the path for the key pair;
- - -i: in wich instance it will execute the commands.
+- -u: define the username;
+- --private-key: the path for the key pair;
+- -i: in wich instance it will execute the commands.
 
+### Executing tasks
+
+The same web server we were able to setup with terraform, we can easily do with Ansible as well. In the playbook yml, under tasks we can setup the following commands:
+```
+- name: Create index.html file
+  copy:
+    dest: /home/ubuntu/index.html
+    content: <h1>Feito com Terraform e Ansible</h1>
+
+- name: Create web server
+  shell: "nohup busybox httpd -f -p 8080 &"
+```
+Commands:
+- name: The name of the task with a brief description;
+- copy: Creates a file, providing the destination and the content;
+- shell: executes a shell command.
+
+### Installing dependencies
+
+As the project gets more and more complex, we will need to install the dependencies to run the project. We can do that using the following task:
+```
+- name: Install python3 and virtualenv
+  apt:
+    pkg:
+    - python3
+    - virtualenv
+    update_cache: true
+  become: true
+```
+Commands:
+- apt: Install applications like apt-get, providing pkg with the list of packages to install;
+  - update_cache: Update apt cache if its older than cache_valid_time
+- become: run tasks as admin
+
+#### Installing dependencies using packages installed
+
+As we installed the necessary applications, we need to also install the dependencies for the project to run. In this example we are doing the project in python, so we will be using pip to install the necessary modules:
+```
+- name: Installing dependencies with pip (Django and Django REST)
+  pip:
+    virtualenv: /home/ubuntu/terraform-alura/venv
+    name: 
+      - django
+      - djangorestframework
+```
+Commands:
+- pip: Install modules for python applications;
+  - virtualenv: Creates a virtual env for given project;
+  - name: Provide the name of the modules that should be installed.
+
+To check if the virtualenv worked as intended activate it in the EC2 instance by accessing the folder created with the task and running the command:
+```
+. venv/bin/activate
+```
+or
+```
+source venv/bin/activate
+```
+
+### Django Project
+
+Now we are going to setup a REST API with django using the setup we created until now. First we run the command below to create a new project:
+```
+django-admin startproject setup .
+```
+**setup** is the folder name and the dot indicates that the project will be created at its root.
+
+Now we can run the django server by passing the localhost and the port we want, like this:
+```
+python3 manage.py runserver 0.0.0.0:8000
+```
+
+#### Django Host Setup
+To allow any machine to access the django application we need to change a setting at **~** > **setup** > **settings.py**. In "ALLOWED_HOSTS" we set the value to `['*']`, which indicates that anyone can access the project URL.
+
+#### Automated Ansible Tasks
+
+The final version of the automated project setup would like this:
+```
+- name: Project Setup - Check if exists
+  stat:
+    path: '/home/ubuntu/terraform-alura/setup'
+  register: project_setup
+
+- name: Project Setup - Create if not exists
+  shell: '. /home/ubuntu/terraform-alura/venv/bin/activate; django-admin startproject setup /home/ubuntu/terraform-alura;'
+  when: not project_setup.stat.exists
+
+- name: Project Setup - Change settings
+  lineinfile:
+    path: /home/ubuntu/terraform-alura/setup/settings.py
+    regexp: 'ALLOWED_HOSTS'
+    line: 'ALLOWED_HOSTS = ["*"]'
+    backrefs: yes
+
+- name: Project Start
+  shell: '. /home/ubuntu/terraform-alura/venv/bin/activate; nohup python3 /home/ubuntu/terraform-alura/manage.py runserver 0.0.0.0:8000 &'
+```
+Commands:
+- stat: Check the status of given task;
+  - path: Check if the file in the path exists;
+- register: Save the stat results;
+- when: Execute the task only when given statement is true;
+- lineinfile: Edit a line in a file given its path and some other arguments;
+  - regexp: Uses regex to find the line;
+  - line: Changes the content to what its filled here;
+  - backrefs: Doesn't change the file if it doesn't find the regex expression.

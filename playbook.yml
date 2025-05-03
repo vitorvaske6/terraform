@@ -7,3 +7,37 @@
     
     - name: Create web server
       shell: "nohup busybox httpd -f -p 8080 &"
+
+    - name: Install python3 and virtualenv
+      apt:
+        pkg:
+        - python3
+        - virtualenv
+        update_cache: true
+      become: true
+    
+    - name: Installing dependencies with pip (Django and Django REST)
+      pip:
+        virtualenv: /home/ubuntu/terraform-alura/venv
+        name: 
+          - django
+          - djangorestframework
+
+    - name: Project Setup - Check if exists
+      stat:
+        path: '/home/ubuntu/terraform-alura/setup'
+      register: project_setup
+
+    - name: Project Setup - Create if not exists
+      shell: '. /home/ubuntu/terraform-alura/venv/bin/activate; django-admin startproject setup /home/ubuntu/terraform-alura;'
+      when: not project_setup.stat.exists
+
+    - name: Project Setup - Change settings
+      lineinfile:
+        path: /home/ubuntu/terraform-alura/setup/settings.py
+        regexp: 'ALLOWED_HOSTS'
+        line: 'ALLOWED_HOSTS = ["*"]'
+        backrefs: yes
+    
+    - name: Project Start
+      shell: '. /home/ubuntu/terraform-alura/venv/bin/activate; nohup python3 /home/ubuntu/terraform-alura/manage.py runserver 0.0.0.0:8000 &'

@@ -23,6 +23,6 @@ resource "aws_instance" "app_server" {
   # user_data = "${file("./scripts/user_data.sh")}"
   # user_data_replace_on_change = true
   tags = {
-    Name = "Terraform-Instance-v0.1"
+    Name = "Terraform-Instance-v1.0"
   }
 }
