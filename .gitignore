@@ -37,4 +37,4 @@ terraform.rc
 .idea/
 
 # Ignore keys directory
-/keys/**
+**/keys/**

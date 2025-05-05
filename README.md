@@ -1,5 +1,8 @@
-# Using Terraform and Ansible on Infrastructure as Code
+# Setting up instances in AWS with Ansible and Terraform
+
 By following Alura course [Infrastructure as Code](https://cursos.alura.com.br/formacao-infraestrutura-codigo) the objective of this project is to setup a Terraform project of IAC.
+
+This is the first course of the formation [Infrastructure as Code: Setting up instances in AWS with Ansible and Terraform](https://cursos.alura.com.br/course/infraestrutura-codigo-maquinas-aws-ansible-terraform)
 
 
 ## Instalation on Windows
@@ -35,6 +38,7 @@ sudo apt-get install ansible
 ## AWS
 
 ### IAM - User and Access Keys
+
 After creating a root user, the first step is to go to [IAM (Identity and Access Management)](https://console.aws.amazon.com/iam) and create a new user to serve as a CLI user later.
 
 Through the sidebar, access the Users menu and start the process to create a new one.
@@ -99,6 +103,7 @@ terraform apply
 ```
 
 ### Security Groups
+
 Before connecting to the instance, it's necessary to setup a security group in **EC2** > **Network & Security** > **Security Groups**.
 
 Select the group you want to edit and then click on **Inbound rules** > **Edit inbound rules**.
@@ -288,6 +293,7 @@ python3 manage.py runserver 0.0.0.0:8000
 ```
 
 #### Django Host Setup
+
 To allow any machine to access the django application we need to change a setting at **~** > **setup** > **settings.py**. In "ALLOWED_HOSTS" we set the value to `['*']`, which indicates that anyone can access the project URL.
 
 #### Automated Ansible Tasks
@@ -322,3 +328,270 @@ Commands:
   - regexp: Uses regex to find the line;
   - line: Changes the content to what its filled here;
   - backrefs: Doesn't change the file if it doesn't find the regex expression.
+
+# Splitting the enviroments in AWS with Ansible and Terraform
+
+By following Alura course [Infrastructure as Code](https://cursos.alura.com.br/formacao-infraestrutura-codigo) the objective of this project is to setup a Terraform project of IAC.
+
+This is the second course of the formation [Infrastructure as Code: Splitting the enviroments in AWS with Ansible and Terraform](https://cursos.alura.com.br/course/infraestrutura-codigo-aws-ansible-terraform)
+
+## Generating the SSH Keys
+
+We already now that we can generate the key pair through AWS console, now we are doing it through linux SSH and sending them to AWS.
+
+Using the WSL, run ssh-keygen, you will be asked for a path for where to create the file and a passphrase if you would like one.
+
+Create two keys, one for development and one for production.
+
+### Applying the Keys into the AWS Instance
+
+Now to apply the new keys we need to add the following resource in our `main.tf` file:
+```
+resource "aws_key_pair" "ssh_key" {
+  key_name   = "dev"
+  public_key = file("./dev/keys/terraform-instance-ssh.pub")
+}
+```
+
+## Using Multiple Enviroments
+
+The codebase is starting to get bigger and tends to increase even more for the time being. To organize better, we are introducing the concept of enviroments. For now we are going to create only 2, development and production. Run the commands below to do that:
+
+```
+mkdir infra
+mkdir env
+mkdir env/dev
+mkdir env/dev/keys
+mkdir env/prod
+mkdir env/prod/keys
+
+mv terraform-instance-ssh ./env/dev/keys
+mv terraform-instance-ssh.pub ./env/dev/keys
+
+mv terraform-instance-ssh-prod ./env/prod/keys
+mv terraform-instance-ssh-prod.pub ./env/prod/keys
+
+mv playbook.yml ./env/dev/
+touch ./env/prod/playbook.yml
+mv hosts.yml infra
+mv main.tf infra
+touch ./infra/variables.tf
+```
+
+### Enviroment Variables
+
+Now that we have multiple enviroments, we should use variables to make sure they use the same base but with different values.
+
+Create a file `variables.tf` and declarate them as the example below:
+```
+variable "aws_region" {
+  type = string
+}
+
+variable "ssh_key" {
+  type = string  
+}
+
+variable "instance" {
+  type = string  
+}
+
+variable "enviroment" {
+  type = string  
+}
+```
+For the variables definitions, the type is the only required attribute, but we can add some others like:
+- default
+- description
+- ephemeral
+- nullable
+- sensitive
+- validation 
+
+Example of validation:
+```
+validation {
+  condition = length(var.aws_region) > 0
+  error_message = "AWS region must be specified."
+}
+```
+
+Now create a new `main.tf` for the development and production enviroment:
+```
+touch ./env/prod/main.tf
+touch ./env/dev/main.tf
+```
+
+Inside each `main.tf` we define the variables values:
+```
+module "aws_dev" {
+  source = "../../infra"
+  instance = "t2.micro"
+  aws_region  = "us-west-2"
+  ssh_key = "terraform-instance-ssh"
+}
+```
+Do the same for the production one.
+
+
+Now we apply it to the `main.tf` from the infrastructure folder using the syntax of `var.` and/or `"${var.}"`:
+```
+provider "aws" {
+  profile = "default"
+  region  = var.aws_region
+}
+
+resource "aws_instance" "app_server" {
+  # AMI ID for Ubuntu Server 24.04 LTS in us-west-2
+  ami = "ami-075686beab831bb7f"
+  # Instance type - 1 vCPU, 1 GiB RAM
+  instance_type = var.instance
+  key_name      = var.ssh_key
+  # user_data = "${file("./scripts/user_data.sh")}"
+  # user_data_replace_on_change = true
+  tags = {
+    Name = "Terraform-Instance-v1.0"
+  }
+}
+
+resource "aws_key_pair" "ssh_key" {
+  key_name   = var.ssh_key
+  public_key = file("./keys/${var.ssh_key}.pub")
+}
+```
+
+## Security Groups
+
+Security groups are a essential part of the infrastructure and governance and we can also automate and accelerate it's creation through terraform. To do that create the file `./infra/security_groups.tf`. Now fill the file with the setup below:
+```
+resource "aws_security_group" "default_sg" {
+  name        = "Default Security Group - ${var.enviroment}"
+  description = "Default security group for Terraform instance"
+  ingress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  tags = {
+    Name = "Default Security Group - ${var.enviroment}"
+  }
+}
+```
+Attributes:
+- ingress - This is what defines the inbound rules we setted up earlier at the AWS console;
+  - from_port - 0 which means any port;
+  - to_port - 0 which means any port;
+  - protocol - -1 which means all protocols;
+  - cidr_blocks - IPv4 IPs granted where 0.0.0 means any IP and /0 means any amount;
+  - ipv6_cidr_blocks - IPv6 IPs granted.
+- egress - This is what defines the outbound rules we setted up earlier at the AWS console;
+- tags - The name that displays at the AWS console.
+
+## Public IP
+
+To avoid the need to fetch the public IP of the instance everytime it changes, now we are going to use terraform to do it for us.
+
+At the `infra/main.tf` file we need to add the code below:
+```
+output "public_ip" {
+  value = aws_instance.app_server.public_ip
+}
+```
+
+Now we do the same for the dev `env/dev/main.tf` file:
+```
+output "ip" {
+  value = module.aws_dev.public_ip
+}
+```
+
+And the production `env/prod/main.tf` file:
+```
+output "ip" {
+  value = module.aws_prod.public_ip
+}
+```
+
+The output name should be different for the infra file, but the same for the enviroments files.
+
+You can also run the command below to fetch the last output again:
+```
+terraform output
+```
+
+**NOTE**: The output only fetches the information, you will need to manually change the files needed.
+
+## Production Setup
+
+Now we are using Ansible to setup the production build, and for that we are going to clone the repository from Github using the production playbook:
+```
+- name: Clone Repository
+  git:
+    repo: 'https://github.com/alura-cursos/clientes-leo-api.git'
+    dest: /home/ubuntu/terraform-alura
+    version: master
+```
+Commands:
+- git - Define the type of task for Github;
+  - repo: The link of the repository with .git at the end;
+  - dest: The path for where it will be cloned;
+  - version: The branch name;
+
+For private repositories it will be needed to create a SSH key at the instance and the following commands should be defined in the ansible playbook:
+```
+- name: Clone Repository
+  git:
+    repo: 'https://github.com/alura-cursos/clientes-leo-api.git'
+    dest: /home/ubuntu/terraform-alura
+    version: master
+    accept_hostkey: yes
+    key_file: /home/ubuntu/.ssh/vaske-git-ssh 
+```
+
+Now that we have a proper repository, we are going to install all the required dependencies using pyhton's requirements.txt file and we are going to do that with Ansible:
+```
+- name: Installing dependencies with pip (Django and Django REST)
+  pip:
+    virtualenv: /home/ubuntu/terraform-alura/venv
+    requirements: /home/ubuntu/terraform-alura/requirements.txt
+```
+
+To finish the setup of the project, we only need to configure the database and to fix a problem with the module dateutils for the python 3.12 and run the project:
+```
+- name: Installing dependencies with pip (Django and Django REST)
+  pip:
+    virtualenv: /home/ubuntu/terraform-alura/venv
+    requirements: /home/ubuntu/terraform-alura/requirements.txt
+
+- name: Installing dependencies with pip (setuptools since distutils is deprecated on python 3.12)
+  pip:
+    virtualenv: /home/ubuntu/terraform-alura/venv
+    name: 
+      - setuptools
+
+- name: Migrate Database
+  shell: '. /home/ubuntu/terraform-alura/venv/bin/activate; python /home/ubuntu/terraform-alura/manage.py migrate'
+
+- name: Load Database
+  shell: '. /home/ubuntu/terraform-alura/venv/bin/activate; python /home/ubuntu/terraform-alura/manage.py loaddata clientes.json'
+
+- name: Project Setup - Change settings
+  lineinfile:
+    path: /home/ubuntu/terraform-alura/setup/settings.py
+    regexp: 'ALLOWED_HOSTS'
+    line: 'ALLOWED_HOSTS = ["*"]'
+    backrefs: yes
+
+- name: Project Start
+  shell: '. /home/ubuntu/terraform-alura/venv/bin/activate; nohup python /home/ubuntu/terraform-alura/manage.py runserver 0.0.0.0:8000 &'
+```
