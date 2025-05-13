@@ -4,8 +4,6 @@ module "aws_dev" {
   aws_region  = "us-west-2"
   ssh_key = "terraform-instance-ssh"
   enviroment = "DEV"
-}
-
-output "ip" {
-  value = module.aws_dev.public_ip
+  min_size = 0
+  max_size = 1
 }

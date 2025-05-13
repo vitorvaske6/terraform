@@ -4,8 +4,6 @@ module "aws_prod" {
   aws_region  = "us-west-2"
   ssh_key = "terraform-instance-ssh-prod"
   enviroment = "PROD"
-}
-
-output "ip" {
-  value = module.aws_prod.public_ip
+  min_size = 1
+  max_size = 10
 }

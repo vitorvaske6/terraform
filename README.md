@@ -595,3 +595,317 @@ To finish the setup of the project, we only need to configure the database and t
 - name: Project Start
   shell: '. /home/ubuntu/terraform-alura/venv/bin/activate; nohup python /home/ubuntu/terraform-alura/manage.py runserver 0.0.0.0:8000 &'
 ```
+
+# Setting up an elastic infrastructure on AWS
+
+By following Alura course [Infrastructure as Code](https://cursos.alura.com.br/formacao-infraestrutura-codigo) the objective of this project is to setup a Terraform project of IAC.
+
+This is the third course of the formation [Infrastructure as Code: Setting up an elastic infrastructure on AWS](https://cursos.alura.com.br/course/infraestrutura-codigo-infraestrutura-elastica-aws)
+
+## Launch Template
+
+We are going to change the infrastructure of this project to create new instances as it's needed. To do that we need to change the `infra/main.tf` file:
+```
+resource "aws_launch_template" "machine" {
+  # AMI ID for Ubuntu Server 24.04 LTS in us-west-2
+  image_id = "ami-075686beab831bb7f"
+  # Instance type - 1 vCPU, 1 GiB RAM
+  instance_type = var.instance
+  key_name      = var.ssh_key
+  # user_data = "${file("./scripts/user_data.sh")}"
+  # user_data_replace_on_change = true
+  tags = {
+    Name = "Terraform-Instance-v1.0"
+  }
+  security_group_names = ["Default Security Group - ${var.enviroment}"]
+}
+
+```
+We need to change the `"aws_instance"` resource to `"aws_launch_template"` and the `ami = ` will be changed to `image_id = ` which is the same thing but in a different name. 
+
+Now whenever we need to setup a instance we can do it with the template we've just created:
+```
+resource "aws_instance" "instance_using_template"{
+    launch_template {
+      id = aws_launch_template.maquina.id
+      version = "$Latest"
+    }
+}
+```
+
+**NOTE**: This template will be used to generate the instances, so if you apply the terraform config, it won't create new instances until we set it up to.
+
+## Auto Scaling Group
+
+Before we can use the elastic EC2 we need to use a group auto scaling resource. It will be responsible to maintain at least one machine in execution, so even if you remove it, it will be created back.
+
+To do that we need to configure it with a maximum and minimal sizes and choose the template id we've created:
+```
+resource "aws_autoscaling_group" "as_group" {
+  name               = "AutoScalingGroup-${var.enviroment}"
+  availability_zones = ["${var.aws_region}a", "${var.aws_region}b"]
+  max_size           = var.max_size
+  min_size           = var.min_size
+  launch_template {
+    id      = aws_launch_template.machine.id
+    version = "$Latest"
+  }
+}
+```
+The sizes are numbers and are used to define the amount of machines. The `availability_zones` attribute is responsible for switching between the zones depending on the availability.
+
+Before we continue we need to remove the IP output, since we don't have the aws_instance anymore.
+
+### Stopping the Auto Scaling
+
+If you've setted the minimun size to 1, the auto scaling group will keep creating them even if you manually delete them. To stop it to keep creating instances, it's necessary to delete the auto scaling group and to do that we go to **EC2** > **Auto Scaling** > **Auto Scaling Groups**:
+
+![Delete Auto Scaling Group](/images/delete_autoscaling_group.png)(https://us-west-2.console.aws.amazon.com/ec2/home?region=us-west-2#AutoScalingGroups:)
+
+Another way to do that is running the command bellow, that not only deletes the group, but everything else it has generated:
+```
+terraform destroy
+```
+
+## Configuring the Machines
+
+With the auto scaling group, the machines are going to be created dynamically, but it won't be setted up with the ansible playbook by itself. So now we are going to do that.
+
+First we need to add a manual script to be ran by the template:
+```
+resource "aws_launch_template" "machine" {
+  # AMI ID for Ubuntu Server 24.04 LTS in us-west-2
+  image_id = "ami-075686beab831bb7f"
+  # Instance type - 1 vCPU, 1 GiB RAM
+  instance_type = var.instance
+  key_name      = var.ssh_key
+  # user_data = "${file("./scripts/user_data.sh")}"
+  # user_data_replace_on_change = true
+  tags = {
+    Name = "Terraform-Instance-v1.0"
+  }
+  security_group_names = ["Default Security Group - ${var.enviroment}"]
+  user_data = filebase64("ansible_setup.sh")
+}
+```
+
+Then we create the `env/prod/ansible_setup.sh` file. For its content:
+```
+#!/bin/bash
+cd /home/ubuntu
+sudo apt update
+sudo apt install python3-pip -y || { echo "Erro ao instalar o python3-pip"; exit 1; }
+sudo apt install ansible-core -y || { echo "Erro ao instalar o Ansible"; exit 1; }
+cat > playbook.yml <<EOT
+- hosts: localhost
+### REST OF THE PLAYBOOK FILE ###
+EOT
+ansible-playbook playbook.yml
+```
+Commands:
+- curl;
+  - -o: Saves the content from the curl;
+  - get-pip.py: The path/name of the file;
+- tee: Creates a file;
+  - -a: Appends the file instead of overwriting;
+  - playbook.yml: The path/name of the file;
+  - > /dev/null: Redirects the output;
+- <<EOT: Its the syntax to pass the playbook content through shell.
+
+**NOTE**: The echo commands will be displayed in the system logs, which can be accessed by going to **EC2** > **Instances** > **Select Instance** > **Actions** > **Monitor and troubleshooting** > **Get system log**.
+
+## Load Balancer
+
+Load balancer divides the work load between the VPCs. Change the `main.tf` file to add 2 resources, the subnet (list of IP addresses in the VPC) and the load balancer it self:
+```
+resource "aws_default_subnet" "subnet_1" {
+  availability_zone = "${var.aws_region}a"
+}
+
+resource "aws_default_subnet" "subnet_2" {
+  availability_zone = "${var.aws_region}b"
+}
+
+resource "aws_lb" "load_balancer" {
+  internal = false
+  subnets = [aws_default_subnet.subnet_1.id, aws_default_subnet.subnet_2.id]
+}
+```
+Attributes:
+- internal: If the load balancer needs to comunicate with the external client, this should be set with false;  
+- subnets: Defines the subnets that the load balancer will work with.
+
+### Target Group
+
+Now we need to setup a target group so the load balancer knows which ones are going to be used. First we add the `target_group_arns` attribute to the `aws_autoscaling_group` resource, then we define the `aws_lb_target_group` resource, and finally we define the `aws_default_vpc` just so we can use as a reference for the `vpc_id` in the `aws_lb_target_group` resource:
+
+```
+resource "aws_autoscaling_group" "as_group" {
+  name               = "AutoScalingGroup-${var.enviroment}"
+  availability_zones = ["${var.aws_region}a", "${var.aws_region}b"]
+  max_size           = var.max_size
+  min_size           = var.min_size
+  launch_template {
+    id      = aws_launch_template.machine.id
+    version = "$Latest"
+  }
+  target_group_arns = [aws_lb_target_group.load_balancer_target_group.arn]
+}
+
+resource "aws_lb_target_group" "load_balancer_target_group" {
+  name = "lb-target-group-${var.enviroment}"
+  port = 8000
+  protocol = "HTTP"
+  vpc_id = aws_default_vpc.default.id
+}
+
+resource "aws_default_vpc" "default" {
+  
+}
+```
+
+### Listener
+
+Now we need to configure the load balancer entry, or as its called, a listener. The configuration is very similar to the [target group](#target-group), but with a default action definition:
+```
+resource "aws_lb_listener" "load_balancer_listener" {
+  load_balancer_arn = aws_lb.load_balancer.arn
+  port              = 8000
+  protocol          = "HTTP"
+  default_action {
+    type = "forward"
+    target_group_arn = aws_lb_target_group.load_balancer_target_group.arn
+  }
+}
+```
+Attributes:
+- default_action: Its used to perform actions to the request, like forwarding, redirecting, returning fixed-response, authenticating with authenticate-cognito and authenticate-oidc.
+
+**NOTE**: Before continue, don't forget to apply the configurations we've done until now with `terraform apply`.
+
+## Load Testing
+
+To be able to estimate the amount of VPCs will be necessary, we need to test the amount of request each machine can handle, to do that we will use a tool called [Locust](https://locust.io/). 
+
+### Testing with Python and Locust
+
+To test the instances with Locust, we will need to create a python file `load_testing.py`:
+```
+from locust import FastHttpUser, task
+
+class WebsiteUser(FastHttpUser):
+  # Define the host URL to access client.
+  host = "http://127.0.0.1:8089"
+
+  @task
+  def index(self):
+    # This task simulates a user accessing the root URL of the application.
+    self.client.get("/")
+```
+
+To run the Locust client use the following command `locust -f load_testing.py`.
+Commands:
+- -f: The argument tells Locust to get the locustfile from master instead of from its local filesystem. 
+
+Once the Locust client is running, you can access with the default url [http://127.0.0.1:8089](http://127.0.0.1:8089). Then you can config the tests with the amount of cocurrent and/or start users and the load balancer URL that should look like something like this `tf-lb-20250513195420623800000003-569342013.us-west-2.elb.amazonaws.com`.
+
+After waiting for a few minutes you will be able to see with the graphs all the requests that are being made by those users:
+![locust](/images/locust.png)
+
+## Elastic Infrastructure
+
+Now that we have some parameters to predict when the instances won't be enough to handle the amount of cocurrent users, we can configure the elastic infrastructure. To do that we will need another resource `aws_autoscaling_policy`:
+```
+resource "aws_autoscaling_policy" "autoscaling_policy" {
+  name                   = "scale-up-${var.enviroment}"
+  autoscaling_group_name = aws_autoscaling_group.as_group.name
+  policy_type            = "TargetTrackingScaling"
+  target_tracking_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ASGAverageCPUUtilization"
+    }
+    target_value = 90.0
+  }
+}
+```
+Attributes:
+- policy_type: Defines the method for the scaling;
+- target_tracking_configuration: The configuration for the `TargetTrackingScaling` policy type;
+  - predefined_metric_specification: Predefined configurations;
+  - target_value: Target value for the average CPU utilization.
+
+Once you get a good metric with locust that will overcome the instances running, the AWS will start creating new instances to supply the demand.
+
+## Development Enviroment
+
+For the development instance we don't have a `ansible_setup.sh` so whenever we try to run it we will face an error regarding the user_data. To fix that we can add a validation and set it to not use a user_data.
+```
+resource "aws_launch_template" "machine" {
+  # AMI ID for Ubuntu Server 24.04 LTS in us-west-2
+  image_id = "ami-075686beab831bb7f"
+  # Instance type - 1 vCPU, 1 GiB RAM
+  instance_type = var.instance
+  key_name      = var.ssh_key
+  # user_data = "${file("./scripts/user_data.sh")}"
+  # user_data_replace_on_change = true
+  tags = {
+    Name = "Terraform-Instance-v1.0"
+  }
+  security_group_names = ["Default Security Group - ${var.enviroment}"]
+  user_data            = var.enviroment == "PROD" ? ("ansible_setup.sh") : ""
+}
+```
+
+The load balancer is not necessary also, so we make similar changes to remove it whenever we are on developer instances:
+```
+resource "aws_autoscaling_group" "as_group" {
+  name               = "AutoScalingGroup-${var.enviroment}"
+  availability_zones = ["${var.aws_region}a", "${var.aws_region}b"]
+  max_size           = var.max_size
+  min_size           = var.min_size
+  launch_template {
+    id      = aws_launch_template.machine.id
+    version = "$Latest"
+  }
+  target_group_arns = var.enviroment == "PROD" ? [aws_lb_target_group.load_balancer_target_group[0].arn] : []
+}
+
+resource "aws_lb" "load_balancer" {
+  internal = false
+  subnets  = [aws_default_subnet.subnet_1.id, aws_default_subnet.subnet_2.id]
+  count    = var.enviroment == "PROD" ? 1 : 0
+}
+
+resource "aws_lb_target_group" "load_balancer_target_group" {
+  name     = "lb-target-group-${var.enviroment}"
+  port     = 8000
+  protocol = "HTTP"
+  vpc_id   = aws_default_vpc.default.id
+  count    = var.enviroment == "PROD" ? 1 : 0
+}
+
+resource "aws_lb_listener" "load_balancer_listener" {
+  load_balancer_arn = aws_lb.load_balancer.arn
+  port              = 8000
+  protocol          = "HTTP"
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.load_balancer_target_group.arn
+  }
+  count = var.enviroment == "PROD" ? 1 : 0
+}
+
+resource "aws_autoscaling_policy" "autoscaling_policy" {
+  name                   = "scale-up-${var.enviroment}"
+  autoscaling_group_name = aws_autoscaling_group.as_group.name
+  policy_type            = "TargetTrackingScaling"
+  target_tracking_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ASGAverageCPUUtilization"
+    }
+    target_value = 90.0
+  }
+  count = var.enviroment == "PROD" ? 1 : 0
+}
+
+```

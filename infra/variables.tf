@@ -13,3 +13,11 @@ variable "instance" {
 variable "enviroment" {
   type = string  
 }
+
+variable "max_size" {
+  type = number  
+}
+
+variable "min_size" {
+  type = number  
+}

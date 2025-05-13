@@ -1,0 +1,52 @@
+#!/bin/bash
+cd /home/ubuntu
+sudo apt update
+sudo apt install python3-pip -y || { echo "Erro ao instalar o python3-pip"; exit 1; }
+sudo apt install ansible-core -y || { echo "Erro ao instalar o Ansible"; exit 1; }
+cat > playbook.yml <<EOT
+- hosts: localhost
+  tasks:
+    - name: Install python3 and virtualenv
+      apt:
+        pkg:
+        - python3
+        - virtualenv
+        update_cache: true
+      become: true
+
+    - name: Clone Repository
+      git:
+        repo: 'https://github.com/alura-cursos/clientes-leo-api.git'
+        dest: /home/ubuntu/terraform-alura
+        version: master
+        force: yes
+
+    - name: Installing dependencies with pip (Django and Django REST)
+      pip:
+        virtualenv: /home/ubuntu/terraform-alura/venv
+        requirements: /home/ubuntu/terraform-alura/requirements.txt
+    
+    - name: Installing dependencies with pip (setuptools since distutils is deprecated on python 3.12)
+      pip:
+        virtualenv: /home/ubuntu/terraform-alura/venv
+        name: 
+          - setuptools
+
+    - name: Migrate Database
+      shell: '. /home/ubuntu/terraform-alura/venv/bin/activate; python /home/ubuntu/terraform-alura/manage.py migrate'
+
+    - name: Load Database
+      shell: '. /home/ubuntu/terraform-alura/venv/bin/activate; python /home/ubuntu/terraform-alura/manage.py loaddata clientes.json'
+
+    - name: Project Setup - Change settings
+      lineinfile:
+        path: /home/ubuntu/terraform-alura/setup/settings.py
+        regexp: 'ALLOWED_HOSTS'
+        line: 'ALLOWED_HOSTS = ["*"]'
+        backrefs: yes
+
+    - name: Project Start
+      shell: '. /home/ubuntu/terraform-alura/venv/bin/activate; nohup python /home/ubuntu/terraform-alura/manage.py runserver 0.0.0.0:8000 &'
+EOT
+
+sudo ansible-playbook playbook.yml
