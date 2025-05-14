@@ -1,3 +1,50 @@
+# Table of Contents
+
+- [Setting up instances in AWS with Ansible and Terraform](#setting-up-instances-in-aws-with-ansible-and-terraform)
+  - [Installation on Windows](#installation-on-windows)
+  - [AWS](#aws)
+    - [IAM - User and Access Keys](#iam---user-and-access-keys)
+    - [AWS CLI](#aws-cli)
+    - [EC2 Instance](#ec2-instance)
+  - [Terraform](#terraform)
+    - [Region](#region)
+    - [EC2 VM/Instance](#ec2-vminstance)
+    - [INIT](#init)
+    - [Security Groups](#security-groups)
+    - [Connecting to the Instance](#connecting-to-the-instance)
+      - [Key Pair](#key-pair)
+      - [Connecting with SSH](#connecting-with-ssh)
+    - [Creating a web server](#creating-a-web-server)
+      - [Automating the creation with Terraform](#automating-the-creation-with-terraform)
+  - [Ansible](#ansible)
+    - [Executing tasks](#executing-tasks)
+    - [Installing dependencies](#installing-dependencies)
+      - [Installing dependencies using packages installed](#installing-dependencies-using-packages-installed)
+    - [Django Project](#django-project)
+      - [Django Host Setup](#django-host-setup)
+    - [Automated Ansible Tasks](#automated-ansible-tasks)
+- [Splitting the enviroments in AWS with Ansible and Terraform](#splitting-the-enviroments-in-aws-with-ansible-and-terraform)
+  - [Generating the SSH Keys](#generating-the-ssh-keys)
+    - [Applying the Keys into the AWS Instance](#applying-the-keys-into-the-aws-instance)
+  - [Using Multiple Enviroments](#using-multiple-enviroments)
+    - [Enviroment Variables](#enviroment-variables)
+  - [Security Groups](#security-groups-1)
+  - [Public IP](#public-ip)
+  - [Production Setup](#production-setup)
+- [Setting up an elastic infrastructure on AWS](#setting-up-an-elastic-infrastructure-on-aws)
+  - [Launch Template](#launch-template)
+  - [Auto Scaling Group](#auto-scaling-group)
+    - [Stopping the Auto Scaling](#stopping-the-auto-scaling)
+  - [Configuring the Machines](#configuring-the-machines)
+  - [Load Balancer](#load-balancer)
+    - [Target Group](#target-group)
+  - [Listener](#listener)
+  - [Load Testing](#load-testing)
+    - [Testing with Python and Locust](#testing-with-python-and-locust)
+  - [Elastic Infrastructure](#elastic-infrastructure)
+  - [Development Enviroment](#development-enviroment)
+- [Scheduling](#scheduling)
+
 # Setting up instances in AWS with Ansible and Terraform
 
 By following Alura course [Infrastructure as Code](https://cursos.alura.com.br/formacao-infraestrutura-codigo) the objective of this project is to setup a Terraform project of IAC.
@@ -5,7 +52,7 @@ By following Alura course [Infrastructure as Code](https://cursos.alura.com.br/f
 This is the first course of the formation [Infrastructure as Code: Setting up instances in AWS with Ansible and Terraform](https://cursos.alura.com.br/course/infraestrutura-codigo-maquinas-aws-ansible-terraform)
 
 
-## Instalation on Windows
+## Installation on Windows
 
 Ansible it's not made to run on windows, so we'll need to install windows WSL to proceed. Run the command below to install the default ubuntu version:
 ```
@@ -852,7 +899,7 @@ resource "aws_launch_template" "machine" {
     Name = "Terraform-Instance-v1.0"
   }
   security_group_names = ["Default Security Group - ${var.enviroment}"]
-  user_data            = var.enviroment == "PROD" ? ("ansible_setup.sh") : ""
+  user_data            = var.enviroment == "PROD" ? filebase64("ansible_setup.sh") : ""
 }
 ```
 
@@ -907,5 +954,31 @@ resource "aws_autoscaling_policy" "autoscaling_policy" {
   }
   count = var.enviroment == "PROD" ? 1 : 0
 }
+```
 
+# Scheduling
+
+For development purposes, it wont be necessary to keep the instances alive during the weekend, so now we are going to use the `aws_autoscaling_schedule` resource to learn how to start or stop the autoscaling groups on schedule:
+```
+resource "aws_autoscaling_schedule" "autoturn_on_schedule" {
+  scheduled_action_name  = "autoturn-on-schedule-${var.enviroment}"
+  autoscaling_group_name = aws_autoscaling_group.as_group.name
+  min_size               = var.min_size
+  max_size               = var.max_size
+  desired_capacity       = 1
+  start_time             = timeadd(timestamp(), "10m")
+  recurrence             = "0 4 * * 1-5" # Adjusted to GMT+0, add or remove 3 hours to be compatible with Brazil
+  count                  = var.enviroment == "PROD" ? 0 : 1 # Only disable in non-PROD environments
+}
+
+resource "aws_autoscaling_schedule" "autoturn_off_schedule" {
+  scheduled_action_name  = "autoturn-off-schedule-${var.enviroment}"
+  autoscaling_group_name = aws_autoscaling_group.as_group.name
+  min_size               = var.min_size
+  max_size               = var.max_size
+  desired_capacity       = 0
+  start_time             = timeadd(timestamp(), "11m")
+  recurrence             = "0 22 * * 1-5" # Adjusted to GMT+0, add or remove 3 hours to be compatible with Brazil
+  count                  = var.enviroment == "PROD" ? 0 : 1 # Only disable in non-PROD environments
+}
 ```

@@ -26,7 +26,7 @@ resource "aws_launch_template" "machine" {
     Name = "Terraform-Instance-v1.0"
   }
   security_group_names = ["Default Security Group - ${var.enviroment}"]
-  user_data            = var.enviroment == "PROD" ? ("ansible_setup.sh") : ""
+  user_data            = var.enviroment == "PROD" ? filebase64("ansible_setup.sh") : ""
 }
 
 resource "aws_key_pair" "ssh_key" {
@@ -92,4 +92,26 @@ resource "aws_autoscaling_policy" "autoscaling_policy" {
     target_value = 90.0
   }
   count = var.enviroment == "PROD" ? 1 : 0
+}
+
+resource "aws_autoscaling_schedule" "autoturn_on_schedule" {
+  scheduled_action_name  = "autoturn-on-schedule-${var.enviroment}"
+  autoscaling_group_name = aws_autoscaling_group.as_group.name
+  min_size               = var.min_size
+  max_size               = var.max_size
+  desired_capacity       = 1
+  start_time             = timeadd(timestamp(), "10m")
+  recurrence             = "0 4 * * 1-5" # Adjusted to GMT+0, add or remove 3 hours to be compatible with Brazil
+  count                  = var.enviroment == "PROD" ? 0 : 1 # Only disable in non-PROD environments
+}
+
+resource "aws_autoscaling_schedule" "autoturn_off_schedule" {
+  scheduled_action_name  = "autoturn-off-schedule-${var.enviroment}"
+  autoscaling_group_name = aws_autoscaling_group.as_group.name
+  min_size               = var.min_size
+  max_size               = var.max_size
+  desired_capacity       = 0
+  start_time             = timeadd(timestamp(), "11m")
+  recurrence             = "0 22 * * 1-5" # Adjusted to GMT+0, add or remove 3 hours to be compatible with Brazil
+  count                  = var.enviroment == "PROD" ? 0 : 1 # Only disable in non-PROD environments
 }
